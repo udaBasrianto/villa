@@ -24,6 +24,9 @@ const Index = () => {
   const [stats, setStats] = useState<{ totalUsers: number; totalBookings: number; totalRooms: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [scrolled, setScrolled] = useState(false);
+  const [userLocation, setUserLocation] = useState<string | null>(null);
+  const [userTempC, setUserTempC] = useState<number | null>(null);
+  const [timeText, setTimeText] = useState(() => format(new Date(), "HH:mm"));
 
   const [checkIn, setCheckIn] = useState<Date>();
   const [checkOut, setCheckOut] = useState<Date>();
@@ -39,6 +42,88 @@ const Index = () => {
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const update = () => setTimeText(format(new Date(), "HH:mm"));
+    update();
+    const interval = window.setInterval(update, 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+
+    const onSuccess: PositionCallback = async (pos) => {
+      const latitude = pos.coords.latitude;
+      const longitude = pos.coords.longitude;
+
+      try {
+        const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
+        weatherUrl.searchParams.set("latitude", String(latitude));
+        weatherUrl.searchParams.set("longitude", String(longitude));
+        weatherUrl.searchParams.set("current", "temperature_2m");
+        weatherUrl.searchParams.set("timezone", "auto");
+
+        const res = await fetch(weatherUrl.toString());
+        if (res.ok) {
+          const data = (await res.json()) as { current?: { temperature_2m?: number } };
+          const temp = data?.current?.temperature_2m;
+          if (typeof temp === "number" && Number.isFinite(temp)) {
+            setUserTempC(Math.round(temp));
+          }
+        }
+      } catch {
+        setUserTempC(null);
+      }
+
+      try {
+        const geoUrl = new URL("https://nominatim.openstreetmap.org/reverse");
+        geoUrl.searchParams.set("format", "jsonv2");
+        geoUrl.searchParams.set("lat", String(latitude));
+        geoUrl.searchParams.set("lon", String(longitude));
+        geoUrl.searchParams.set("zoom", "10");
+        geoUrl.searchParams.set("addressdetails", "1");
+
+        const res = await fetch(geoUrl.toString(), {
+          headers: {
+            "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
+          },
+        });
+        if (!res.ok) {
+          setUserLocation("Lokasi Anda");
+          return;
+        }
+
+        const data = (await res.json()) as {
+          address?: {
+            city?: string;
+            town?: string;
+            village?: string;
+            state?: string;
+            county?: string;
+            country?: string;
+          };
+        };
+        const address = data?.address;
+        const city =
+          address?.city || address?.town || address?.village || address?.county || address?.state || address?.country;
+        setUserLocation(city ? city : "Lokasi Anda");
+      } catch {
+        setUserLocation("Lokasi Anda");
+      }
+    };
+
+    const onError: PositionErrorCallback = () => {
+      setUserLocation(null);
+      setUserTempC(null);
+    };
+
+    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+      enableHighAccuracy: false,
+      timeout: 8000,
+      maximumAge: 10 * 60 * 1000,
+    });
   }, []);
 
   useEffect(() => {
@@ -100,6 +185,8 @@ const Index = () => {
 
   const brandName = villaData.app_name || "VILLAPARA";
   const logoUrl = villaData.app_logo_url;
+  const locationLabel = (userLocation || villaData.location || "Ubud, Bali").toUpperCase();
+  const temperatureLabel = `${userTempC ?? 28}°C`;
 
   return (
     <div className="min-h-screen bg-background pb-20 md:pb-8">
@@ -177,14 +264,14 @@ const Index = () => {
         
         <div className="absolute inset-0 flex flex-col justify-end px-6 pb-6 pt-24 sm:pt-28 md:p-12 lg:p-20">
           {/* Welcome Widget */}
-          <div className="hidden sm:flex items-center gap-3 mb-4 animate-fade-in">
+          <div className="flex items-center gap-3 mb-4 animate-fade-in flex-wrap">
             <div className="bg-white/10 backdrop-blur-md border border-white/20 px-3 py-1.5 rounded-2xl flex items-center gap-2">
               <CloudSun className="w-4 h-4 text-accent" />
-              <span className="text-white text-[11px] font-bold tracking-wide uppercase">28°C Ubud, Bali</span>
+              <span className="text-white text-[11px] font-bold tracking-wide uppercase">{temperatureLabel} {locationLabel}</span>
             </div>
             <div className="bg-white/10 backdrop-blur-md border border-white/20 px-3 py-1.5 rounded-2xl flex items-center gap-2">
               <Clock className="w-4 h-4 text-white" />
-              <span className="text-white text-[11px] font-bold tracking-wide uppercase">14:00 PM</span>
+              <span className="text-white text-[11px] font-bold tracking-wide uppercase">{timeText}</span>
             </div>
           </div>
 
@@ -385,7 +472,7 @@ const Index = () => {
               }}
               variant="outline"
               size="sm"
-              className="bg-card/70 backdrop-blur-sm rounded-xl p-1 border border-border hidden sm:flex"
+              className="bg-card/70 backdrop-blur-sm rounded-xl p-1 border border-border flex"
             >
               <ToggleGroupItem value="carousel" aria-label="Carousel" className="rounded-lg">
                 <LayoutGrid className="w-4 h-4" />

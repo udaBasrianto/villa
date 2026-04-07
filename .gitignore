@@ -22,6 +22,9 @@ server/.env.*
 server/uploads
 uploads
 
+# Database dumps
+*.sql
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
