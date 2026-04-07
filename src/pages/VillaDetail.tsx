@@ -11,7 +11,7 @@ import { format } from "date-fns";
 import { id as idLocale } from "date-fns/locale";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import Autoplay from "embla-carousel-autoplay";
-import { isFavoriteId, toggleFavoriteId } from "@/lib/utils";
+import { getApiUrl, isFavoriteId, toggleFavoriteId } from "@/lib/utils";
 
 const amenityIcons: Record<string, typeof Wifi> = {
   WiFi: Wifi, Pool: Waves, AC: Wind, Kitchen: UtensilsCrossed,
@@ -53,7 +53,7 @@ const VillaDetail = () => {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [favorite, setFavorite] = useState(false);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
 
   useEffect(() => {
     const fetchData = async () => {

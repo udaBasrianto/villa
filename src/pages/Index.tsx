@@ -13,7 +13,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
+import { cn, getApiUrl } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 const Index = () => {
@@ -34,7 +34,7 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [mobilePackageView, setMobilePackageView] = useState<"carousel" | "list" | "grid2">("carousel");
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
 
   useEffect(() => {
     const handleScroll = () => {

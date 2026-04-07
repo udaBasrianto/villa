@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { id } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
+import { getApiUrl } from "@/lib/utils";
 
 const SearchPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,7 +18,7 @@ const SearchPage = () => {
   const checkOut = searchParams.get("checkout");
   const onlyAvailable = searchParams.get("available") === "true";
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
 
   useEffect(() => {
     const fetchRooms = async () => {

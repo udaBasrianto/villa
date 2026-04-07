@@ -15,6 +15,7 @@ import Profile from "./pages/Profile";
 import Auth from "./pages/Auth";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
+import { getApiUrl } from "@/lib/utils";
 
 const queryClient = new QueryClient();
 
@@ -22,7 +23,7 @@ const ThemeSync = () => {
   useEffect(() => {
     const fetchTheme = async () => {
       try {
-        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+        const API_URL = getApiUrl();
         const res = await fetch(`${API_URL}/villa-info`);
         const data = await res.json();
         if (data && data.theme_color) {

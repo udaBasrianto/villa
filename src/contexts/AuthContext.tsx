@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { getApiUrl } from "@/lib/utils";
 
 interface User {
   id: string;
@@ -42,7 +43,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
 
   useEffect(() => {
     const savedSession = localStorage.getItem("auth_session");

@@ -3,7 +3,7 @@ import { Heart } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Room } from "@/data/villas";
 import RoomCard from "@/components/RoomCard";
-import { readFavoriteIds } from "@/lib/utils";
+import { getApiUrl, readFavoriteIds } from "@/lib/utils";
 
 const Favorites = () => {
   const { user } = useAuth();
@@ -31,7 +31,7 @@ const Favorites = () => {
     const fetchRooms = async () => {
       setLoading(true);
       try {
-        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+        const API_URL = getApiUrl();
         const res = await fetch(`${API_URL}/rooms`);
         if (!res.ok) throw new Error();
         const data = (await res.json()) as Array<Record<string, unknown>>;

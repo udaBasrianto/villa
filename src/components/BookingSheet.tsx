@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
+import { getApiUrl } from "@/lib/utils";
 
 interface BookingSheetProps {
   room: Room;
@@ -37,7 +38,7 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
 
   useEffect(() => {
     if (open && room.id) {

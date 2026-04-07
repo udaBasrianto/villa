@@ -5,6 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function getApiUrl() {
+  const envUrl = (import.meta.env.VITE_API_URL as string | undefined) || "";
+  if (envUrl.trim()) return envUrl;
+  return import.meta.env.DEV ? "http://localhost:3000/api" : "/api";
+}
+
 export function getFavoritesStorageKey(userId?: string | null) {
   return `favorites_${userId || "guest"}`;
 }

@@ -59,6 +59,7 @@ import { Room, VillaInfo } from "@/data/villas";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { getApiUrl } from "@/lib/utils";
 import { Line, LineChart, XAxis, CartesianGrid } from "recharts";
 import {
   Dialog,
@@ -128,7 +129,7 @@ const AdminDashboard = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+  const API_URL = getApiUrl();
   const token = localStorage.getItem("auth_token");
 
   const fetchData = async () => {

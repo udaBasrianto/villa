@@ -5,6 +5,7 @@ import { id as idLocale } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
+import { getApiUrl } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -58,7 +59,7 @@ const Bookings = () => {
     }
     const fetchBookings = async () => {
       try {
-        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+        const API_URL = getApiUrl();
         const token = localStorage.getItem("auth_token");
         if (!token) throw new Error("Token tidak ditemukan");
 
