@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import pool from './db.js';
 import { v4 as uuidv4 } from 'uuid';
-import { sendAdminNewBookingNotification, sendBookingReceipt, sendBookingReminder, sendPasswordResetEmail, sendPostStayFollowup, sendTestEmail } from './emailService.js';
+import { sendAdminNewBookingNotification, sendBookingReceipt, sendBookingReminder, sendPasswordResetEmail, sendPostStayFollowup, sendTestEmail, testEmailDelivery } from './emailService.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -514,9 +514,11 @@ app.post('/api/admin/email-settings/test', isAdmin, async (req, res) => {
     const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
     const target = to || settings.admin_notify_email || req.user?.email;
     if (!target) return res.status(400).json({ message: 'Email tujuan tidak valid' });
-    const sent = await sendTestEmail(target, settings);
-    if (!sent) return res.status(400).json({ message: 'Gagal mengirim test email' });
-    res.json({ message: 'Test email terkirim' });
+    const result = await testEmailDelivery(target, settings);
+    if (!result.ok) {
+      return res.status(400).json({ message: result.message || 'Gagal mengirim test email', details: result.details || undefined });
+    }
+    res.json({ message: result.message || 'Test email terkirim' });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }

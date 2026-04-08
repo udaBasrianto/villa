@@ -80,6 +80,15 @@ const sendMail = async ({ to, subject, html, attachments }, config) => {
   return true;
 };
 
+const getSafeErrorDetails = (error) => {
+  const e = error && typeof error === 'object' ? error : {};
+  const message = typeof e.message === 'string' ? e.message : 'Unknown error';
+  const code = typeof e.code === 'string' ? e.code : undefined;
+  const command = typeof e.command === 'string' ? e.command : undefined;
+  const responseCode = typeof e.responseCode === 'number' ? e.responseCode : undefined;
+  return { message, code, command, responseCode };
+};
+
 export const sendBookingReceipt = async (email, bookingDetails, config) => {
   const { room_name, check_in, check_out, guests, children, total_price, child_discount, payment_method, id } = bookingDetails;
   
@@ -314,5 +323,55 @@ export const sendTestEmail = async (email, config) => {
   } catch (error) {
     console.error('Gagal kirim test email:', error);
     return false;
+  }
+};
+
+export const testEmailDelivery = async (to, config) => {
+  const c = resolveEmailConfig(config);
+  const missing = [];
+  if (!(c.smtp_host || '').trim()) missing.push('SMTP Host');
+  if (!(c.email_from || '').trim()) missing.push('Email From');
+  if (!(String(to || '').trim())) missing.push('Email tujuan');
+  if (missing.length) {
+    return {
+      ok: false,
+      message: `Konfigurasi belum lengkap: ${missing.join(', ')}`,
+    };
+  }
+
+  const transporter = getTransporter(c);
+  if (!transporter) {
+    return { ok: false, message: 'SMTP transporter belum siap (cek SMTP Host/Port)' };
+  }
+
+  try {
+    await transporter.verify();
+  } catch (error) {
+    const d = getSafeErrorDetails(error);
+    return {
+      ok: false,
+      message: `Gagal konek/auth ke SMTP: ${d.message}`,
+      details: d,
+    };
+  }
+
+  const brandName = getBrandName(c);
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+      <h2 style="color: #0f172a; text-align: center;">Test Email</h2>
+      <p>Email test dari <strong>${brandName}</strong> berhasil dikirim.</p>
+    </div>
+  `;
+
+  try {
+    await sendMail({ to, subject: 'Test Email', html }, c);
+    return { ok: true, message: 'Test email terkirim' };
+  } catch (error) {
+    const d = getSafeErrorDetails(error);
+    return {
+      ok: false,
+      message: `Gagal kirim email: ${d.message}`,
+      details: d,
+    };
   }
 };
