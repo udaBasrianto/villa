@@ -294,12 +294,12 @@ const VillaDetail = () => {
           </div>
 
           {/* Quick Info Bar */}
-          <div className="grid grid-cols-3 gap-3 mt-8 p-4 rounded-3xl bg-muted/50 border border-border">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 p-4 rounded-3xl bg-muted/50 border border-border">
             <div className="flex flex-col items-center gap-1">
               <Users className="w-5 h-5 text-primary" />
               <span className="text-[11px] font-bold text-foreground uppercase tracking-tighter">{room.capacity} Tamu</span>
             </div>
-            <div className="flex flex-col items-center gap-1 border-x border-border/50">
+            <div className="flex flex-col items-center gap-1 sm:border-x border-border/50">
               <Bed className="w-5 h-5 text-primary" />
               <span className="text-[11px] font-bold text-foreground uppercase tracking-tighter">{bedLabel}</span>
             </div>
@@ -307,6 +307,12 @@ const VillaDetail = () => {
               <ShieldCheck className="w-5 h-5 text-primary" />
               <span className="text-[11px] font-bold text-foreground uppercase tracking-tighter">
                 {isVerified ? "Verified" : "Standard"}
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <ShieldCheck className="w-5 h-5 text-amber-600" />
+              <span className="text-[11px] font-bold text-foreground uppercase tracking-tighter">
+                {villaData?.syariah_enabled === 0 ? "Non Syariah" : "Syariah"}
               </span>
             </div>
           </div>
@@ -369,6 +375,24 @@ const VillaDetail = () => {
               </ul>
             )}
           </div>
+
+          {villaData?.syariah_enabled !== 0 && (
+            <div className="mt-6 p-5 rounded-3xl bg-amber-50 border border-amber-100">
+              <h2 className="text-base font-bold text-foreground mb-3">Kebijakan Syariah</h2>
+              <div className="space-y-2">
+                {(String(villaData?.syariah_policy || ""))
+                  .split("\n")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map((s) => (
+                    <div key={s} className="flex items-start gap-2 text-xs text-amber-800">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1" />
+                      <span>{s}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
 
           <div className="mt-8">
             <div className="flex items-start justify-between gap-4">

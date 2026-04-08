@@ -32,6 +32,7 @@ interface BookingRow {
 const statusColors: Record<string, string> = {
   confirmed: "bg-secondary text-secondary-foreground",
   pending: "bg-accent text-accent-foreground",
+  pending_verification: "bg-amber-100 text-amber-800",
   completed: "bg-muted text-muted-foreground",
   cancelled: "bg-destructive/10 text-destructive",
 };
@@ -39,6 +40,7 @@ const statusColors: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   confirmed: "Dikonfirmasi",
   pending: "Menunggu",
+  pending_verification: "Verifikasi Syariah",
   completed: "Selesai",
   cancelled: "Dibatalkan",
 };

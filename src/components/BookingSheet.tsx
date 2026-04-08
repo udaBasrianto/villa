@@ -10,7 +10,8 @@ import type { Room } from "@/data/villas";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { getApiUrl } from "@/lib/utils";
 
 interface BookingSheetProps {
@@ -35,6 +36,9 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
   const [loading, setLoading] = useState(false);
   const [bookedDates, setBookedDates] = useState<{ start: Date; end: Date }[]>([]);
   const [legalDocs, setLegalDocs] = useState<FileList | null>(null);
+  const [syariahEnabled, setSyariahEnabled] = useState(true);
+  const [syariahPolicy, setSyariahPolicy] = useState<string>("");
+  const [syariahAgreed, setSyariahAgreed] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -42,6 +46,14 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
 
   useEffect(() => {
     if (open && room.id) {
+      fetch(`${API_URL}/villa-info`)
+        .then((res) => res.json())
+        .then((data) => {
+          setSyariahEnabled(Boolean(data?.syariah_enabled ?? true));
+          setSyariahPolicy(typeof data?.syariah_policy === "string" ? data.syariah_policy : "");
+        })
+        .catch(() => {});
+
       fetch(`${API_URL}/rooms/${room.id}/availability`)
         .then(res => res.json())
         .then((data: AvailabilityRow[]) => {
@@ -108,8 +120,13 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
       return;
     }
 
-    if (guestCount > 1 && (!legalDocs || legalDocs.length === 0)) {
-      toast.error("Wajib mengunggah KTP & Buku Nikah untuk pasangan");
+    if (syariahEnabled && !syariahAgreed) {
+      toast.error("Wajib menyetujui kebijakan syariah sebelum booking");
+      return;
+    }
+
+    if (syariahEnabled && guestCount >= 2 && (!legalDocs || legalDocs.length === 0)) {
+      toast.error("Wajib mengunggah dokumen identitas untuk verifikasi syariah");
       return;
     }
 
@@ -128,6 +145,7 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
       formData.append("payment_method", paymentMethod);
       formData.append("total_price", Math.round(grandTotal).toString());
       formData.append("child_discount", totalChildDiscount.toString());
+      formData.append("syariah_agreed", syariahEnabled ? (syariahAgreed ? "1" : "0") : "0");
 
       if (legalDocs) {
         for (let i = 0; i < legalDocs.length; i++) {
@@ -147,10 +165,11 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
         const data = await response.json();
         throw new Error(data.message || "Gagal membuat booking");
       }
+      const data = await response.json().catch(() => ({}));
 
       onBook?.();
       setSuccess(true);
-      toast.success("Booking berhasil dikonfirmasi!");
+      toast.success(data?.status === "pending_verification" ? "Booking dibuat. Menunggu verifikasi syariah admin." : "Booking berhasil dibuat!");
 
       setTimeout(() => {
         setOpen(false);
@@ -161,6 +180,7 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
         setChildrenCount(0);
         setPaymentMethod("Transfer Bank");
         setLegalDocs(null);
+        setSyariahAgreed(false);
       }, 1500);
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : "Gagal membuat booking");
@@ -308,45 +328,73 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
               </div>
 
               {/* Legal Documents Upload */}
-              <div className="space-y-3 p-4 rounded-2xl bg-amber-50 border border-amber-100">
-                <div className="flex items-center gap-2 text-amber-800">
-                  <ShieldCheck className="w-5 h-5" />
-                  <label className="text-xs font-bold uppercase tracking-wider">Syarat & Ketentuan Syariah</label>
-                </div>
-                <p className="text-[11px] text-amber-700 leading-relaxed font-medium">
-                  Sebagai Villa Syariah, kami mewajibkan pasangan untuk melampirkan foto **KTP masing-masing** dan **Buku Nikah / Akte Nikah** yang sah.
-                </p>
-                <div className="space-y-2 mt-2">
-                  <div className="relative">
-                    <input 
-                      type="file" 
-                      multiple 
-                      accept="image/*,.pdf" 
-                      onChange={(e) => setLegalDocs(e.target.files)}
-                      className="hidden"
-                      id="legal-docs-upload"
-                    />
-                    <label 
-                      htmlFor="legal-docs-upload"
-                      className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-white border-2 border-dashed border-amber-200 text-amber-700 hover:border-amber-400 hover:bg-amber-100/50 cursor-pointer transition-all"
-                    >
-                      <FileUp className="w-4 h-4" />
-                      <span className="text-xs font-bold">
-                        {legalDocs ? `${legalDocs.length} File Terpilih` : "Upload KTP & Buku Nikah"}
-                      </span>
-                    </label>
+              {syariahEnabled && (
+                <div className="space-y-3 p-4 rounded-2xl bg-amber-50 border border-amber-100">
+                  <div className="flex items-center gap-2 text-amber-800">
+                    <ShieldCheck className="w-5 h-5" />
+                    <label className="text-xs font-bold uppercase tracking-wider">Kebijakan Syariah</label>
                   </div>
-                  {legalDocs && (
-                    <div className="flex flex-wrap gap-1">
-                      {Array.from(legalDocs).map((file, idx) => (
-                        <div key={idx} className="text-[9px] bg-amber-200/50 text-amber-800 px-2 py-0.5 rounded-full font-bold">
-                          {file.name}
+
+                  <div className="space-y-2">
+                    {(syariahPolicy || "")
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter(Boolean)
+                      .slice(0, 8)
+                      .map((line) => (
+                        <div key={line} className="flex items-start gap-2 text-[11px] text-amber-700 leading-relaxed font-medium">
+                          <div className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5" />
+                          <span>{line}</span>
                         </div>
                       ))}
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <Checkbox
+                      id="syariah_agree"
+                      checked={syariahAgreed}
+                      onCheckedChange={(v) => setSyariahAgreed(v === true)}
+                    />
+                    <Label htmlFor="syariah_agree" className="text-[11px] font-bold text-amber-800">
+                      Saya setuju dengan kebijakan syariah
+                    </Label>
+                  </div>
+
+                  <div className="space-y-2 mt-2">
+                    <div className="text-[11px] text-amber-700 leading-relaxed font-medium">
+                      Verifikasi dokumen diperlukan untuk booking 2 dewasa atau lebih.
                     </div>
-                  )}
+                    <div className="relative">
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/*,.pdf"
+                        onChange={(e) => setLegalDocs(e.target.files)}
+                        className="hidden"
+                        id="legal-docs-upload"
+                      />
+                      <label
+                        htmlFor="legal-docs-upload"
+                        className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-white border-2 border-dashed border-amber-200 text-amber-700 hover:border-amber-400 hover:bg-amber-100/50 cursor-pointer transition-all"
+                      >
+                        <FileUp className="w-4 h-4" />
+                        <span className="text-xs font-bold">
+                          {legalDocs ? `${legalDocs.length} File Terpilih` : "Upload Dokumen Identitas"}
+                        </span>
+                      </label>
+                    </div>
+                    {legalDocs && (
+                      <div className="flex flex-wrap gap-1">
+                        {Array.from(legalDocs).map((file, idx) => (
+                          <div key={idx} className="text-[9px] bg-amber-200/50 text-amber-800 px-2 py-0.5 rounded-full font-bold">
+                            {file.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Price Summary */}
               {nights > 0 && (
@@ -376,7 +424,11 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
                 </div>
               )}
 
-              <Button onClick={handleBook} className="w-full h-14 rounded-2xl text-lg font-bold mt-4" disabled={loading || !checkIn || !checkOut}>
+              <Button
+                onClick={handleBook}
+                className="w-full h-14 rounded-2xl text-lg font-bold mt-4"
+                disabled={loading || !checkIn || !checkOut || (syariahEnabled && !syariahAgreed)}
+              >
                 {loading ? "Memproses..." : "Konfirmasi Booking"}
               </Button>
             </div>

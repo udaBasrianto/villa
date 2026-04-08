@@ -90,6 +90,10 @@ interface AdminBooking {
   payment_method: string;
   legal_docs?: string; // JSON string from backend
   payment_receipt?: string;
+  syariah_agreed?: number;
+  syariah_agreed_at?: string | null;
+  syariah_verified_at?: string | null;
+  syariah_verified_by?: string | null;
   status: string;
   created_at: string;
   guest_phone?: string;
@@ -166,6 +170,7 @@ interface EmailSettings {
 const statusColors: Record<string, string> = {
   confirmed: "bg-green-100 text-green-700",
   pending: "bg-yellow-100 text-yellow-700",
+  pending_verification: "bg-amber-100 text-amber-700",
   completed: "bg-blue-100 text-blue-700",
   cancelled: "bg-red-100 text-red-700",
 };
@@ -285,6 +290,23 @@ const AdminDashboard = () => {
     }
   };
 
+  const verifySyariah = async (bookingId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/admin/bookings/${bookingId}/verify-syariah`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.message || "Gagal verifikasi syariah");
+      toast.success(data?.message || "Verifikasi syariah berhasil");
+      await fetchData();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Gagal verifikasi syariah");
+    }
+  };
+
   const openUserDetail = async (userId: string) => {
     setUserDialogOpen(true);
     setLoadingUserDetail(true);
@@ -356,6 +378,8 @@ const AdminDashboard = () => {
       rating: parseFloat(formData.get("rating") as string),
       reviews: parseInt(formData.get("reviews") as string),
       theme_color: formData.get("theme_color"),
+      syariah_enabled: formData.get("syariah_enabled") === "on",
+      syariah_policy: formData.get("syariah_policy"),
     };
 
     try {
@@ -1068,6 +1092,16 @@ const AdminDashboard = () => {
                                 <Eye className="w-3 h-3" /> Dokumen
                               </Button>
                             )}
+                            {booking.status === "pending_verification" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-amber-200 text-amber-700 hover:bg-amber-50 h-8 gap-1 rounded-xl"
+                                onClick={() => verifySyariah(booking.id)}
+                              >
+                                <ShieldCheck className="w-3 h-3" /> Verifikasi
+                              </Button>
+                            )}
                             {booking.status !== "cancelled" && booking.status !== "completed" && (
                               <Button
                                 size="sm"
@@ -1424,6 +1458,33 @@ const AdminDashboard = () => {
                     <Label className="text-sm font-medium">Deskripsi</Label>
                     <Textarea name="description" defaultValue={villaData?.description} rows={4} />
                   </div>
+                  <div className="rounded-3xl border border-amber-100 bg-amber-50 p-5 space-y-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-black text-slate-900">Mode Syariah</div>
+                        <div className="text-xs text-slate-600 mt-1">Aktifkan kebijakan syariah + verifikasi dokumen saat booking.</div>
+                      </div>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          name="syariah_enabled"
+                          defaultChecked={villaData?.syariah_enabled !== 0}
+                          className="h-5 w-5 accent-amber-600"
+                        />
+                        <span className="text-xs font-bold text-amber-800">Aktif</span>
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Kebijakan Syariah (1 baris 1 aturan)</Label>
+                      <Textarea
+                        name="syariah_policy"
+                        defaultValue={String(villaData?.syariah_policy || "")}
+                        rows={5}
+                        className="rounded-2xl bg-white"
+                        placeholder="Contoh: Wajib membawa identitas resmi (KTP)"
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">URL Gambar Header</Label>
                     <div className="flex gap-2">
@@ -1755,6 +1816,17 @@ const AdminDashboard = () => {
                 Konfirmasi Booking
               </Button>
             )}
+            {viewDocsBooking?.status === 'pending_verification' && (
+              <Button
+                className="bg-amber-600 hover:bg-amber-700 rounded-xl"
+                onClick={async () => {
+                  await verifySyariah(viewDocsBooking.id);
+                  setViewDocsBooking(null);
+                }}
+              >
+                Verifikasi Syariah
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1831,6 +1903,30 @@ const AdminDashboard = () => {
                 <div className="space-y-4">
                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Kepatuhan Syariah</h4>
                   <div className="bg-white border border-slate-100 p-4 rounded-2xl">
+                    <div className="space-y-2 mb-4">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500">Persetujuan Syariah</span>
+                        <span className="font-bold text-slate-900">
+                          {Number(selectedDetailBooking.syariah_agreed || 0) === 1 ? "Ya" : "Tidak"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500">Waktu Setuju</span>
+                        <span className="font-bold text-slate-900">
+                          {selectedDetailBooking.syariah_agreed_at
+                            ? format(new Date(selectedDetailBooking.syariah_agreed_at), "dd MMM yyyy, HH:mm", { locale: idLocale })
+                            : "-"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500">Verifikasi Admin</span>
+                        <span className="font-bold text-slate-900">
+                          {selectedDetailBooking.syariah_verified_at
+                            ? format(new Date(selectedDetailBooking.syariah_verified_at), "dd MMM yyyy, HH:mm", { locale: idLocale })
+                            : "-"}
+                        </span>
+                      </div>
+                    </div>
                     {selectedDetailBooking.legal_docs ? (
                       <div className="space-y-2">
                         <p className="text-[10px] text-slate-500 font-bold mb-2">DOKUMEN IDENTITAS ({JSON.parse(selectedDetailBooking.legal_docs).length})</p>
@@ -1900,6 +1996,29 @@ const AdminDashboard = () => {
                   }}
                 >
                   Konfirmasi
+                </Button>
+              </>
+            )}
+            {selectedDetailBooking?.status === 'pending_verification' && (
+              <>
+                <Button
+                  variant="destructive"
+                  className="rounded-xl flex-1 h-12"
+                  onClick={() => {
+                    updateStatus(selectedDetailBooking.id, 'cancelled');
+                    setSelectedDetailBooking(null);
+                  }}
+                >
+                  Tolak
+                </Button>
+                <Button
+                  className="bg-amber-600 hover:bg-amber-700 rounded-xl flex-1 h-12"
+                  onClick={async () => {
+                    await verifySyariah(selectedDetailBooking.id);
+                    setSelectedDetailBooking(null);
+                  }}
+                >
+                  Verifikasi
                 </Button>
               </>
             )}

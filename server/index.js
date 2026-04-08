@@ -202,6 +202,18 @@ const ensureSchema = async () => {
     if (!columnNames.includes('poststay_followup_sent_at')) {
       await pool.query('ALTER TABLE bookings ADD COLUMN poststay_followup_sent_at TIMESTAMP NULL AFTER checkin_reminder_sent_at');
     }
+    if (!columnNames.includes('syariah_agreed')) {
+      await pool.query('ALTER TABLE bookings ADD COLUMN syariah_agreed TINYINT(1) NOT NULL DEFAULT 0 AFTER poststay_followup_sent_at');
+    }
+    if (!columnNames.includes('syariah_agreed_at')) {
+      await pool.query('ALTER TABLE bookings ADD COLUMN syariah_agreed_at TIMESTAMP NULL AFTER syariah_agreed');
+    }
+    if (!columnNames.includes('syariah_verified_at')) {
+      await pool.query('ALTER TABLE bookings ADD COLUMN syariah_verified_at TIMESTAMP NULL AFTER syariah_agreed_at');
+    }
+    if (!columnNames.includes('syariah_verified_by')) {
+      await pool.query('ALTER TABLE bookings ADD COLUMN syariah_verified_by VARCHAR(36) NULL AFTER syariah_verified_at');
+    }
   } catch (err) {
     console.error("Error updating schema:", err);
   }
@@ -216,8 +228,19 @@ const ensureSchema = async () => {
     if (!columnNames.includes('app_logo_url')) {
       await pool.query('ALTER TABLE villa_info ADD COLUMN app_logo_url TEXT NULL AFTER app_name');
     }
+    if (!columnNames.includes('syariah_enabled')) {
+      await pool.query('ALTER TABLE villa_info ADD COLUMN syariah_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER app_logo_url');
+    }
+    if (!columnNames.includes('syariah_policy')) {
+      await pool.query('ALTER TABLE villa_info ADD COLUMN syariah_policy TEXT NULL AFTER syariah_enabled');
+    }
 
     await pool.query("UPDATE villa_info SET app_name = IFNULL(app_name, 'VILLAPARA') WHERE id = 1");
+    await pool.query(
+      `UPDATE villa_info 
+       SET syariah_policy = IFNULL(syariah_policy, 'Villa Syariah: dilarang membawa alkohol/narkoba\\nWajib membawa identitas resmi (KTP)\\nPasangan wajib dapat menunjukkan bukti pernikahan yang sah\\nDilarang melakukan aktivitas yang melanggar syariat\\nMaksimal tamu sesuai kapasitas yang tertera')
+       WHERE id = 1`,
+    );
   } catch (err) {
     console.error("Error updating villa_info schema:", err);
   }
@@ -419,11 +442,11 @@ app.patch('/api/admin/villa-policies', isAdmin, async (req, res) => {
 
 // Update Villa Info (Admin Only)
 app.patch('/api/admin/villa-info', isAdmin, async (req, res) => {
-  const { name, location, description, image, rating, reviews, theme_color, app_name, app_logo_url } = req.body;
+  const { name, location, description, image, rating, reviews, theme_color, app_name, app_logo_url, syariah_enabled, syariah_policy } = req.body;
   try {
     await pool.query(
-      'UPDATE villa_info SET name = ?, location = ?, description = ?, image = ?, rating = ?, reviews = ?, theme_color = ?, app_name = ?, app_logo_url = ? WHERE id = 1',
-      [name, location, description, image, rating, reviews, theme_color, app_name, app_logo_url]
+      'UPDATE villa_info SET name = ?, location = ?, description = ?, image = ?, rating = ?, reviews = ?, theme_color = ?, app_name = ?, app_logo_url = ?, syariah_enabled = ?, syariah_policy = ? WHERE id = 1',
+      [name, location, description, image, rating, reviews, theme_color, app_name, app_logo_url, syariah_enabled ? 1 : 0, syariah_policy]
     );
     res.json({ message: 'Villa info updated' });
   } catch (error) {
@@ -766,6 +789,29 @@ app.patch('/api/admin/bookings/:id', isAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/admin/bookings/:id/verify-syariah', isAdmin, async (req, res) => {
+  try {
+    const bookingId = req.params.id;
+    const [rows] = await pool.query('SELECT id, status, syariah_agreed FROM bookings WHERE id = ? LIMIT 1', [bookingId]);
+    const booking = rows?.[0];
+    if (!booking) return res.status(404).json({ message: 'Booking tidak ditemukan' });
+    if (booking.status !== 'pending_verification') {
+      return res.status(400).json({ message: 'Booking ini tidak dalam status verifikasi syariah' });
+    }
+    if (!booking.syariah_agreed) {
+      return res.status(400).json({ message: 'Tamu belum menyetujui kebijakan syariah' });
+    }
+
+    await pool.query(
+      'UPDATE bookings SET status = ?, syariah_verified_at = NOW(), syariah_verified_by = ? WHERE id = ?',
+      ['confirmed', req.user.id, bookingId],
+    );
+    res.json({ message: 'Verifikasi syariah berhasil. Booking dikonfirmasi.' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get Booked Dates for a Room
 app.get('/api/rooms/:id/availability', async (req, res) => {
   try {
@@ -926,7 +972,7 @@ app.get('/api/bookings', async (req, res) => {
 // Create Booking with Document Upload
 app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req, res) => {
   try {
-    const { room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method } = req.body;
+    const { room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, syariah_agreed } = req.body;
     
     // Handle uploaded files
     let legalDocs = [];
@@ -934,10 +980,33 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
       legalDocs = req.files.map(file => `/uploads/${file.filename}`);
     }
 
+    let syariahEnabled = true;
+    try {
+      const [rows] = await pool.query('SELECT syariah_enabled FROM villa_info WHERE id = 1 LIMIT 1');
+      const row = rows?.[0];
+      if (row && row.syariah_enabled !== undefined && row.syariah_enabled !== null) {
+        syariahEnabled = Boolean(row.syariah_enabled);
+      }
+    } catch {
+      syariahEnabled = true;
+    }
+
+    const agreed = String(syariah_agreed || '').trim() === 'true' || String(syariah_agreed || '').trim() === '1';
+    const guestCountNum = Number(guests || 0);
+
+    if (syariahEnabled && !agreed) {
+      return res.status(400).json({ message: 'Wajib menyetujui kebijakan syariah sebelum booking' });
+    }
+
+    if (syariahEnabled && guestCountNum >= 2 && legalDocs.length === 0) {
+      return res.status(400).json({ message: 'Wajib mengunggah dokumen identitas untuk verifikasi syariah' });
+    }
+
     const id = uuidv4();
+    const initialStatus = syariahEnabled && guestCountNum >= 2 ? 'pending_verification' : 'pending';
     await pool.query(
-      'INSERT INTO bookings (id, user_id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, legal_docs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, req.user.id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, JSON.stringify(legalDocs)]
+      'INSERT INTO bookings (id, user_id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, legal_docs, status, syariah_agreed, syariah_agreed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
+      [id, req.user.id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, JSON.stringify(legalDocs), initialStatus, syariahEnabled ? (agreed ? 1 : 0) : 0]
     );
 
     getEmailSettings()
@@ -966,7 +1035,7 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
       })
       .catch(() => {});
 
-    res.status(201).json({ id, message: 'Booking created successfully' });
+    res.status(201).json({ id, status: initialStatus, message: 'Booking created successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

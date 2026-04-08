@@ -13,6 +13,8 @@ export interface VillaInfo {
   theme_color?: string;
   app_name?: string;
   app_logo_url?: string;
+  syariah_enabled?: number | boolean;
+  syariah_policy?: string;
 }
 
 export const villaInfo: VillaInfo = {
@@ -92,5 +94,5 @@ export interface Booking {
   checkOut: string;
   guests: number;
   totalPrice: number;
-  status: "confirmed" | "pending" | "completed";
+  status: "confirmed" | "pending" | "pending_verification" | "completed" | "cancelled";
 }
