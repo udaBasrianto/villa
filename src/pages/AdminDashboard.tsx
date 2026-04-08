@@ -60,7 +60,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { getApiUrl } from "@/lib/utils";
-import { Line, LineChart, XAxis, CartesianGrid } from "recharts";
+import { Area, AreaChart, XAxis, YAxis, CartesianGrid } from "recharts";
 import {
   Dialog,
   DialogContent,
@@ -192,6 +192,7 @@ const AdminDashboard = () => {
   const [reportEndDate, setReportEndDate] = useState("");
   const [viewDocsBooking, setViewDocsBooking] = useState<AdminBooking | null>(null);
   const [selectedDetailBooking, setSelectedDetailBooking] = useState<AdminBooking | null>(null);
+  const [performanceRange, setPerformanceRange] = useState<"7d" | "30d" | "90d">("7d");
   const [savingEmailSettings, setSavingEmailSettings] = useState(false);
   const [testEmailTo, setTestEmailTo] = useState("");
   
@@ -244,7 +245,7 @@ const AdminDashboard = () => {
       setPolicyNoSmoking(Boolean(policiesData?.no_smoking ?? true));
       if (emailSettingsData) {
         setEmailSettings(emailSettingsData);
-        setTestEmailTo(emailSettingsData?.admin_notify_email || "");
+        setTestEmailTo((prev) => (prev && prev.trim() ? prev : (emailSettingsData?.admin_notify_email || "")));
       }
     } catch (error) {
       toast.error("Gagal memuat data dashboard");
@@ -642,25 +643,46 @@ const AdminDashboard = () => {
   const confirmedCount = roomStatuses.filter(r => r.status === "confirmed").length;
   const availableCount = roomStatuses.filter(r => r.status === "available").length;
 
-  const last7Days = Array.from({ length: 7 }).map((_, index) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - index));
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
+  const performanceDaysCount = performanceRange === "90d" ? 90 : performanceRange === "30d" ? 30 : 7;
 
-  const performanceData = last7Days.map((d) => {
-    const next = new Date(d);
-    next.setDate(next.getDate() + 1);
-    const count = bookings.filter((b) => {
+  const performanceDates = useMemo(() => {
+    return Array.from({ length: performanceDaysCount }).map((_, index) => {
+      const d = new Date();
+      d.setDate(d.getDate() - ((performanceDaysCount - 1) - index));
+      d.setHours(0, 0, 0, 0);
+      return d;
+    });
+  }, [performanceDaysCount]);
+
+  const performanceData = useMemo(() => {
+    return performanceDates.map((d) => {
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      const count = bookings.filter((b) => {
+        const created = new Date(b.created_at);
+        return created >= d && created < next;
+      }).length;
+      return {
+        day: format(d, performanceDaysCount > 7 ? "d MMM" : "dd MMM", { locale: idLocale }),
+        bookings: count,
+      };
+    });
+  }, [bookings, performanceDates, performanceDaysCount]);
+
+  const performanceSummary = useMemo(() => {
+    const currentTotal = performanceData.reduce((sum, row) => sum + Number(row.bookings || 0), 0);
+    const prevStart = new Date(performanceDates[0] || new Date());
+    prevStart.setDate(prevStart.getDate() - performanceDaysCount);
+    prevStart.setHours(0, 0, 0, 0);
+    const prevEnd = new Date(performanceDates[0] || new Date());
+    prevEnd.setHours(0, 0, 0, 0);
+    const prevTotal = bookings.filter((b) => {
       const created = new Date(b.created_at);
-      return created >= d && created < next;
+      return created >= prevStart && created < prevEnd;
     }).length;
-    return {
-      day: format(d, "dd MMM", { locale: idLocale }),
-      bookings: count,
-    };
-  });
+    const deltaPct = prevTotal > 0 ? Math.round(((currentTotal - prevTotal) / prevTotal) * 100) : currentTotal > 0 ? 100 : 0;
+    return { currentTotal, prevTotal, deltaPct };
+  }, [bookings, performanceData, performanceDates, performanceDaysCount]);
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
@@ -803,25 +825,87 @@ const AdminDashboard = () => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
                 <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-black text-slate-900">Performance</h2>
-                    <div className="text-xs font-bold text-slate-500 bg-slate-50 px-3 py-2 rounded-full">
-                      Last 7 days
+                    <div>
+                      <h2 className="text-lg font-black text-slate-900">Performance</h2>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={performanceRange === "7d" ? "default" : "outline"}
+                          className="h-8 rounded-full px-3"
+                          onClick={() => setPerformanceRange("7d")}
+                        >
+                          7D
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={performanceRange === "30d" ? "default" : "outline"}
+                          className="h-8 rounded-full px-3"
+                          onClick={() => setPerformanceRange("30d")}
+                        >
+                          30D
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={performanceRange === "90d" ? "default" : "outline"}
+                          className="h-8 rounded-full px-3"
+                          onClick={() => setPerformanceRange("90d")}
+                        >
+                          90D
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-bold text-slate-500">Total booking</div>
+                      <div className="text-2xl font-black text-slate-900 mt-0.5">{performanceSummary.currentTotal}</div>
+                      <div
+                        className={`text-xs font-bold mt-0.5 ${
+                          performanceSummary.deltaPct >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
+                        {performanceSummary.deltaPct >= 0 ? "+" : ""}
+                        {performanceSummary.deltaPct}% vs prev
+                      </div>
                     </div>
                   </div>
                   <div className="mt-4">
                     <ChartContainer config={chartConfig} className="h-[260px] w-full">
-                      <LineChart data={performanceData} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
-                        <CartesianGrid vertical={false} />
-                        <XAxis dataKey="day" tickLine={false} axisLine={false} />
-                        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                        <Line
-                          dataKey="bookings"
-                          type="monotone"
-                          stroke="var(--color-bookings)"
-                          strokeWidth={3}
-                          dot={false}
+                      <AreaChart data={performanceData} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="fillBookings" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="var(--color-bookings)" stopOpacity={0.35} />
+                            <stop offset="90%" stopColor="var(--color-bookings)" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="day"
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                          interval="preserveStartEnd"
+                          tickFormatter={(value, index) => {
+                            const step = performanceDaysCount >= 90 ? 14 : performanceDaysCount >= 30 ? 7 : 1;
+                            return index % step === 0 ? String(value) : "";
+                          }}
                         />
-                      </LineChart>
+                        <YAxis hide />
+                        <ChartTooltip
+                          cursor={{ stroke: "hsl(var(--border))", strokeDasharray: "3 3" }}
+                          content={<ChartTooltipContent indicator="line" />}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="bookings"
+                          stroke="var(--color-bookings)"
+                          strokeWidth={2.5}
+                          fill="url(#fillBookings)"
+                          dot={false}
+                          activeDot={{ r: 4, strokeWidth: 0, fill: "var(--color-bookings)" }}
+                        />
+                      </AreaChart>
                     </ChartContainer>
                   </div>
                 </div>
@@ -1553,7 +1637,7 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Email Test Tujuan</Label>
-                      <Input value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder="admin@domain.com" />
+                      <Input type="email" value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder="admin@domain.com" />
                     </div>
                   </div>
 
