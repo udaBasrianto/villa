@@ -39,8 +39,13 @@ const RoomCard = ({ room, index = 0, variant = "basic" }: RoomCardProps) => {
 
   if (variant === "list") {
     return (
-      <button
+      <div
         onClick={() => navigate(`/villa/${room.id}`)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") navigate(`/villa/${room.id}`);
+        }}
+        role="button"
+        tabIndex={0}
         className="w-full text-left bg-card rounded-2xl overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 animate-slide-up group"
         style={{ animationDelay: `${index * 80}ms`, animationFillMode: "backwards" }}
       >
@@ -88,13 +93,18 @@ const RoomCard = ({ room, index = 0, variant = "basic" }: RoomCardProps) => {
             </div>
           </div>
         </div>
-      </button>
+      </div>
     );
   }
 
   return (
-    <button
+    <div
       onClick={() => navigate(`/villa/${room.id}`)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") navigate(`/villa/${room.id}`);
+      }}
+      role="button"
+      tabIndex={0}
       className="w-full text-left bg-card rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 animate-slide-up group border border-border/50"
       style={{ animationDelay: `${index * 80}ms`, animationFillMode: "backwards" }}
     >
@@ -152,7 +162,7 @@ const RoomCard = ({ room, index = 0, variant = "basic" }: RoomCardProps) => {
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 };
 

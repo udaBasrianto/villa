@@ -186,6 +186,7 @@ const ensureSchema = async () => {
   try {
     const [columns] = await pool.query('SHOW COLUMNS FROM bookings');
     const columnNames = columns.map(c => c.Field);
+    const statusColumn = columns.find(c => c.Field === 'status');
     
     if (!columnNames.includes('legal_docs')) {
       await pool.query('ALTER TABLE bookings ADD COLUMN legal_docs TEXT AFTER payment_method');
@@ -213,6 +214,36 @@ const ensureSchema = async () => {
     }
     if (!columnNames.includes('syariah_verified_by')) {
       await pool.query('ALTER TABLE bookings ADD COLUMN syariah_verified_by VARCHAR(36) NULL AFTER syariah_verified_at');
+    }
+
+    if (statusColumn) {
+      const type = String(statusColumn.Type || '');
+      if (type.startsWith('enum(')) {
+        const values = [];
+        const re = /'((?:\\'|[^'])*)'/g;
+        let m;
+        while ((m = re.exec(type)) !== null) {
+          values.push(m[1].replace(/\\'/g, "'"));
+        }
+        const required = ['pending', 'pending_verification', 'confirmed', 'completed', 'cancelled'];
+        const nextValues = [...values];
+        for (const v of required) {
+          if (!nextValues.includes(v)) nextValues.push(v);
+        }
+        if (!values.includes('pending_verification')) {
+          const quoted = nextValues.map(v => `'${String(v).replace(/'/g, "\\'")}'`).join(',');
+          const defaultValue = nextValues.includes('pending') ? 'pending' : nextValues[0];
+          await pool.query(`ALTER TABLE bookings MODIFY COLUMN status ENUM(${quoted}) NOT NULL DEFAULT '${defaultValue}'`);
+        }
+      } else if (type.startsWith('varchar(')) {
+        const sizeMatch = type.match(/^varchar\((\d+)\)/i);
+        const size = sizeMatch ? Number(sizeMatch[1]) : 0;
+        if (!Number.isFinite(size) || size < 20) {
+          await pool.query("ALTER TABLE bookings MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'");
+        }
+      } else {
+        await pool.query("ALTER TABLE bookings MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'");
+      }
     }
   } catch (err) {
     console.error("Error updating schema:", err);
@@ -993,9 +1024,28 @@ app.get('/api/bookings', async (req, res) => {
 
 // Create Booking with Document Upload
 app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req, res) => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
     const { room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, syariah_agreed } = req.body;
+    const roomId = typeof room_id === 'string' ? room_id.trim() : '';
+    const checkInStr = typeof check_in === 'string' ? check_in.trim() : '';
+    const checkOutStr = typeof check_out === 'string' ? check_out.trim() : '';
+    const paymentMethodStr = typeof payment_method === 'string' ? payment_method.trim() : '';
+    const guestsNum = Number(guests || 0);
+    const childrenNum = Number(children || 0);
+    const totalPriceNum = Number(total_price || 0);
+    const childDiscountNum = Number(child_discount || 0);
+
+    if (!roomId) return res.status(400).json({ message: 'room_id wajib diisi' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(checkInStr) || !/^\d{4}-\d{2}-\d{2}$/.test(checkOutStr)) {
+      return res.status(400).json({ message: 'Format tanggal tidak valid' });
+    }
+    if (checkOutStr <= checkInStr) return res.status(400).json({ message: 'Tanggal check-out harus setelah check-in' });
+    if (!Number.isFinite(guestsNum) || guestsNum < 1) return res.status(400).json({ message: 'Jumlah tamu tidak valid' });
+    if (!Number.isFinite(childrenNum) || childrenNum < 0) return res.status(400).json({ message: 'Jumlah anak tidak valid' });
+    if (!Number.isFinite(totalPriceNum) || totalPriceNum <= 0) return res.status(400).json({ message: 'Total harga tidak valid' });
+    if (!Number.isFinite(childDiscountNum) || childDiscountNum < 0) return res.status(400).json({ message: 'Potongan anak tidak valid' });
+    if (!paymentMethodStr) return res.status(400).json({ message: 'Metode pembayaran tidak valid' });
     
     // Handle uploaded files
     let legalDocs = [];
@@ -1015,7 +1065,7 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
     }
 
     const agreed = String(syariah_agreed || '').trim() === 'true' || String(syariah_agreed || '').trim() === '1';
-    const guestCountNum = Number(guests || 0);
+    const guestCountNum = guestsNum;
 
     if (syariahEnabled && !agreed) {
       return res.status(400).json({ message: 'Wajib menyetujui kebijakan syariah sebelum booking' });
@@ -1025,8 +1075,18 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
       return res.status(400).json({ message: 'Wajib mengunggah dokumen identitas untuk verifikasi syariah' });
     }
 
+    connection = await pool.getConnection();
     await connection.beginTransaction();
-    const [roomRows] = await connection.query('SELECT total_units FROM rooms WHERE id = ? FOR UPDATE', [room_id]);
+    let roomRows;
+    try {
+      [roomRows] = await connection.query('SELECT total_units FROM rooms WHERE id = ? FOR UPDATE', [roomId]);
+    } catch (error) {
+      if (error?.code === 'ER_BAD_FIELD_ERROR') {
+        [roomRows] = await connection.query('SELECT id FROM rooms WHERE id = ? FOR UPDATE', [roomId]);
+      } else {
+        throw error;
+      }
+    }
     const roomRow = roomRows?.[0];
     if (!roomRow) {
       await connection.rollback();
@@ -1041,7 +1101,7 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
          AND status NOT IN ('cancelled')
          AND check_in < ?
          AND check_out > ?`,
-      [room_id, check_out, check_in],
+      [roomId, checkOutStr, checkInStr],
     );
     const overlapCount = Number(overlapRows?.[0]?.count || 0);
     if (overlapCount >= totalUnits) {
@@ -1053,7 +1113,7 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
     const initialStatus = syariahEnabled && guestCountNum >= 2 ? 'pending_verification' : 'pending';
     await connection.query(
       'INSERT INTO bookings (id, user_id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, legal_docs, status, syariah_agreed, syariah_agreed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
-      [id, req.user.id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, JSON.stringify(legalDocs), initialStatus, syariahEnabled ? (agreed ? 1 : 0) : 0]
+      [id, req.user.id, roomId, room_name, room_image, checkInStr, checkOutStr, guestsNum, childrenNum, totalPriceNum, childDiscountNum, paymentMethodStr, JSON.stringify(legalDocs), initialStatus, syariahEnabled ? (agreed ? 1 : 0) : 0]
     );
     await connection.commit();
 
@@ -1086,12 +1146,16 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
     res.status(201).json({ id, status: initialStatus, message: 'Booking created successfully' });
   } catch (error) {
     try {
-      await connection.rollback();
+      if (connection) await connection.rollback();
     } catch {}
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    const code = error?.code;
+    console.error('Booking error:', error);
+    if (code === 'ER_NO_SUCH_TABLE') return res.status(500).json({ message: 'Database belum siap (tabel tidak ditemukan)', code });
+    if (code === 'EACCES' || code === 'EPERM') return res.status(500).json({ message: 'Server tidak punya izin menulis file upload', code });
+    if (code === 'ER_BAD_FIELD_ERROR') return res.status(500).json({ message: 'Database belum update (kolom tidak ditemukan)', code });
+    res.status(500).json({ message: 'Server error', code });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 });
 
@@ -1116,6 +1180,20 @@ app.patch('/api/bookings/:id/receipt', requireAuth, upload.single('payment_recei
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+app.use((err, req, res, next) => {
+  if (err && err.name === 'MulterError') {
+    return res.status(400).json({ message: err.message, code: err.code });
+  }
+  if (err?.code === 'EACCES' || err?.code === 'EPERM') {
+    return res.status(500).json({ message: 'Server tidak punya izin menulis file upload', code: err.code });
+  }
+  if (err) {
+    console.error('Unhandled error:', err);
+    return res.status(500).json({ message: 'Server error', code: err.code });
+  }
+  next();
 });
 
 let emailJobRunning = false;

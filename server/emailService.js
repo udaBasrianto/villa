@@ -64,6 +64,7 @@ const getTransporter = (config) => {
     host,
     port,
     secure,
+    family: 4,
     auth: user && pass ? { user, pass } : undefined,
   });
   transporterCache.set(cacheKey, transporter);

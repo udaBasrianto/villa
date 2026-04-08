@@ -192,9 +192,9 @@ const Index = () => {
     <div className="min-h-screen bg-background pb-20 md:pb-8">
       {/* Sticky Header */}
       <header
-        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 px-6 md:px-12 py-4 flex items-center justify-between ${
+        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 px-6 md:px-12 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] flex items-center justify-between ${
           scrolled
-            ? "bg-background/80 backdrop-blur-xl border-b border-border py-3"
+            ? "bg-background/80 backdrop-blur-xl border-b border-border pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]"
             : "bg-transparent"
         }`}
       >
