@@ -29,6 +29,18 @@ interface ProfileData {
   email: string;
 }
 
+interface BookingItem {
+  id: string;
+  villa_name: string;
+  villa_image: string;
+  status: string;
+  check_in: string;
+  check_out: string;
+  total_price: number;
+  payment_method: string;
+  payment_receipt?: string | null;
+}
+
 const Profile = () => {
   const { user, signOut, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -59,7 +71,7 @@ const Profile = () => {
   const [notifEmail, setNotifEmail] = useState(false);
   
   // My Bookings state
-  const [myBookings, setMyBookings] = useState<any[]>([]);
+  const [myBookings, setMyBookings] = useState<BookingItem[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [uploadingReceipt, setUploadingReceipt] = useState<string | null>(null);
 
@@ -204,7 +216,7 @@ const Profile = () => {
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
-      setMyBookings(data);
+      setMyBookings(Array.isArray(data) ? (data as BookingItem[]) : []);
     } catch (err) {
       toast.error("Gagal mengambil data pesanan");
     } finally {
@@ -229,8 +241,9 @@ const Profile = () => {
       toast.success("Bukti transfer berhasil diunggah");
       // Refresh list
       openMyBookings();
-    } catch (err: any) {
-      toast.error(err.message || "Gagal mengunggah bukti transfer");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Gagal mengunggah bukti transfer";
+      toast.error(message);
     } finally {
       setUploadingReceipt(null);
     }

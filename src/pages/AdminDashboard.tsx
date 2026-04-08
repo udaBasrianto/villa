@@ -95,12 +95,72 @@ interface AdminBooking {
   guest_phone?: string;
 }
 
+interface AdminUserRow {
+  id: string;
+  email: string;
+  role: string;
+  full_name: string | null;
+  phone: string | null;
+  total_bookings: number;
+  total_spent: number;
+  last_booking_at: string | null;
+}
+
+interface AdminUserDetail {
+  user: {
+    id: string;
+    email: string;
+    role: string;
+    full_name: string | null;
+    phone: string | null;
+    avatar_url: string | null;
+  };
+  stats: {
+    total_bookings: number;
+    total_spent: number;
+    last_booking_at: string | null;
+    total_reviews: number;
+  };
+  bookings: Array<{
+    id: string;
+    room_name?: string;
+    room_image?: string;
+    villa_name?: string;
+    villa_image?: string;
+    check_in: string;
+    check_out: string;
+    total_price: number;
+    payment_method: string;
+    status: string;
+    created_at: string;
+    legal_docs?: string;
+    payment_receipt?: string;
+  }>;
+}
+
 interface VillaPolicies {
   check_in_start: string;
   check_in_end: string;
   check_out_time: string;
   no_smoking: boolean;
   rules: string[];
+}
+
+interface EmailSettings {
+  brand_name: string;
+  app_url: string;
+  email_from: string;
+  admin_notify_email: string;
+  bank_name: string;
+  bank_account: string;
+  bank_account_name: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_pass_set: boolean;
+  email_job_interval_minutes: number;
+  checkin_reminder_days: number;
+  post_stay_followup_days: number;
 }
 
 const statusColors: Record<string, string> = {
@@ -113,10 +173,17 @@ const statusColors: Record<string, string> = {
 const AdminDashboard = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [villaData, setVillaData] = useState<VillaInfo | null>(null);
   const [policies, setPolicies] = useState<VillaPolicies | null>(null);
+  const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userSearch, setUserSearch] = useState("");
+  const [selectedUser, setSelectedUser] = useState<AdminUserDetail | null>(null);
+  const [userDialogOpen, setUserDialogOpen] = useState(false);
+  const [loadingUserDetail, setLoadingUserDetail] = useState(false);
+  const [updatingUserRole, setUpdatingUserRole] = useState(false);
   const [isRoomDialogOpen, setIsRoomDialogOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [policyNoSmoking, setPolicyNoSmoking] = useState(true);
@@ -125,6 +192,8 @@ const AdminDashboard = () => {
   const [reportEndDate, setReportEndDate] = useState("");
   const [viewDocsBooking, setViewDocsBooking] = useState<AdminBooking | null>(null);
   const [selectedDetailBooking, setSelectedDetailBooking] = useState<AdminBooking | null>(null);
+  const [savingEmailSettings, setSavingEmailSettings] = useState(false);
+  const [testEmailTo, setTestEmailTo] = useState("");
   
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -134,24 +203,29 @@ const AdminDashboard = () => {
 
   const fetchData = async () => {
     try {
-      const [statsRes, bookingsRes, roomsRes, villaRes, policiesRes] = await Promise.all([
+      const [statsRes, bookingsRes, usersRes, roomsRes, villaRes, policiesRes, emailSettingsRes] = await Promise.all([
         fetch(`${API_URL}/admin/stats`, { headers: { "Authorization": `Bearer ${token}` } }),
         fetch(`${API_URL}/admin/bookings`, { headers: { "Authorization": `Bearer ${token}` } }),
+        fetch(`${API_URL}/admin/users`, { headers: { "Authorization": `Bearer ${token}` } }),
         fetch(`${API_URL}/rooms`),
         fetch(`${API_URL}/villa-info`),
-        fetch(`${API_URL}/villa-policies`)
+        fetch(`${API_URL}/villa-policies`),
+        fetch(`${API_URL}/admin/email-settings`, { headers: { "Authorization": `Bearer ${token}` } }),
       ]);
 
-      if (!statsRes.ok || !bookingsRes.ok) throw new Error("Gagal mengambil data admin");
+      if (!statsRes.ok || !bookingsRes.ok || !usersRes.ok) throw new Error("Gagal mengambil data admin");
 
       const statsData = await statsRes.json();
       const bookingsData = await bookingsRes.json();
+      const usersData = await usersRes.json();
       const roomsData = await roomsRes.json();
       const villaInfoData = await villaRes.json();
       const policiesData = policiesRes.ok ? await policiesRes.json() : null;
+      const emailSettingsData = emailSettingsRes.ok ? await emailSettingsRes.json() : null;
 
       setStats(statsData);
       setBookings(bookingsData);
+      setUsers(Array.isArray(usersData) ? (usersData as AdminUserRow[]) : []);
       setRooms(
         (roomsData as unknown[]).map((raw) => {
           const r = raw as Record<string, unknown>;
@@ -168,6 +242,10 @@ const AdminDashboard = () => {
       setVillaData(villaInfoData);
       setPolicies(policiesData);
       setPolicyNoSmoking(Boolean(policiesData?.no_smoking ?? true));
+      if (emailSettingsData) {
+        setEmailSettings(emailSettingsData);
+        setTestEmailTo(emailSettingsData?.admin_notify_email || "");
+      }
     } catch (error) {
       toast.error("Gagal memuat data dashboard");
     } finally {
@@ -205,6 +283,64 @@ const AdminDashboard = () => {
       toast.error("Gagal mengubah status");
     }
   };
+
+  const openUserDetail = async (userId: string) => {
+    setUserDialogOpen(true);
+    setLoadingUserDetail(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/users/${userId}`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "Gagal memuat detail tamu");
+      setSelectedUser(data as AdminUserDetail);
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Gagal memuat detail tamu");
+    } finally {
+      setLoadingUserDetail(false);
+    }
+  };
+
+  const closeUserDetail = () => {
+    setUserDialogOpen(false);
+    setSelectedUser(null);
+  };
+
+  const updateUserRole = async (userId: string, role: "user" | "admin") => {
+    setUpdatingUserRole(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/users/${userId}/role`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ role }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "Gagal update role");
+      toast.success("Role berhasil diubah");
+      await fetchData();
+      if (selectedUser?.user?.id === userId) {
+        await openUserDetail(userId);
+      }
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Gagal update role");
+    } finally {
+      setUpdatingUserRole(false);
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => {
+      const name = (u.full_name || "").toLowerCase();
+      const email = (u.email || "").toLowerCase();
+      const phone = (u.phone || "").toLowerCase();
+      return name.includes(q) || email.includes(q) || phone.includes(q);
+    });
+  }, [users, userSearch]);
 
   const handleUpdateVilla = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -283,6 +419,66 @@ const AdminDashboard = () => {
       fetchData();
     } catch (error) {
       toast.error("Gagal memperbarui kebijakan villa");
+    }
+  };
+
+  const handleUpdateEmailSettings = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSavingEmailSettings(true);
+    try {
+      const formData = new FormData(e.currentTarget);
+      const payload = {
+        brand_name: String(formData.get("brand_name") || ""),
+        app_url: String(formData.get("app_url") || ""),
+        email_from: String(formData.get("email_from") || ""),
+        admin_notify_email: String(formData.get("admin_notify_email") || ""),
+        bank_name: String(formData.get("bank_name") || ""),
+        bank_account: String(formData.get("bank_account") || ""),
+        bank_account_name: String(formData.get("bank_account_name") || ""),
+        smtp_host: String(formData.get("smtp_host") || ""),
+        smtp_port: Number(formData.get("smtp_port") || 0) || 587,
+        smtp_user: String(formData.get("smtp_user") || ""),
+        smtp_pass: String(formData.get("smtp_pass") || ""),
+        email_job_interval_minutes: Number(formData.get("email_job_interval_minutes") || 0) || 30,
+        checkin_reminder_days: Number(formData.get("checkin_reminder_days") || 0) || 1,
+        post_stay_followup_days: Number(formData.get("post_stay_followup_days") || 0) || 1,
+      };
+
+      const res = await fetch(`${API_URL}/admin/email-settings`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "Gagal menyimpan pengaturan email");
+      toast.success("Pengaturan email tersimpan");
+      fetchData();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Gagal menyimpan pengaturan email");
+    } finally {
+      setSavingEmailSettings(false);
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    try {
+      const to = (testEmailTo || "").trim();
+      const res = await fetch(`${API_URL}/admin/email-settings/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ to }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "Gagal mengirim test email");
+      toast.success(data?.message || "Test email terkirim");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Gagal mengirim test email");
     }
   };
 
@@ -499,6 +695,9 @@ const AdminDashboard = () => {
               <TabsTrigger value="booking-list" className="justify-start rounded-xl px-3 py-2.5 gap-2 data-[state=active]:bg-slate-50 data-[state=active]:shadow-none">
                 <List className="w-4 h-4" /> Daftar Booking
               </TabsTrigger>
+              <TabsTrigger value="guests" className="justify-start rounded-xl px-3 py-2.5 gap-2 data-[state=active]:bg-slate-50 data-[state=active]:shadow-none">
+                <Users className="w-4 h-4" /> Tamu
+              </TabsTrigger>
               <TabsTrigger value="rooms" className="justify-start rounded-xl px-3 py-2.5 gap-2 data-[state=active]:bg-slate-50 data-[state=active]:shadow-none">
                 <Bed className="w-4 h-4" /> Rooms
               </TabsTrigger>
@@ -510,6 +709,9 @@ const AdminDashboard = () => {
               </TabsTrigger>
               <TabsTrigger value="laporan" className="justify-start rounded-xl px-3 py-2.5 gap-2 data-[state=active]:bg-slate-50 data-[state=active]:shadow-none">
                 <FileSpreadsheet className="w-4 h-4" /> Laporan
+              </TabsTrigger>
+              <TabsTrigger value="email" className="justify-start rounded-xl px-3 py-2.5 gap-2 data-[state=active]:bg-slate-50 data-[state=active]:shadow-none">
+                <Mail className="w-4 h-4" /> Email
               </TabsTrigger>
             </TabsList>
           </div>
@@ -539,12 +741,15 @@ const AdminDashboard = () => {
             </div>
 
             <div className="mt-6 lg:hidden">
-              <TabsList className="w-full grid grid-cols-6 bg-white border h-12 rounded-2xl p-1 shadow-sm">
+              <TabsList className="w-full grid grid-cols-8 bg-white border h-12 rounded-2xl p-1 shadow-sm">
                 <TabsTrigger value="dashboard" className="rounded-xl gap-2">
                   <LayoutDashboard className="w-4 h-4" />
                 </TabsTrigger>
                 <TabsTrigger value="booking-list" className="rounded-xl gap-2">
                   <List className="w-4 h-4" />
+                </TabsTrigger>
+                <TabsTrigger value="guests" className="rounded-xl gap-2">
+                  <Users className="w-4 h-4" />
                 </TabsTrigger>
                 <TabsTrigger value="rooms" className="rounded-xl gap-2">
                   <Bed className="w-4 h-4" />
@@ -557,6 +762,9 @@ const AdminDashboard = () => {
                 </TabsTrigger>
                 <TabsTrigger value="laporan" className="rounded-xl gap-2">
                   <FileSpreadsheet className="w-4 h-4" />
+                </TabsTrigger>
+                <TabsTrigger value="email" className="rounded-xl gap-2">
+                  <Mail className="w-4 h-4" />
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -810,6 +1018,209 @@ const AdminDashboard = () => {
               </div>
             </TabsContent>
 
+            <TabsContent value="guests" className="mt-6">
+              <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-900">Data Tamu</h2>
+                    <p className="text-sm text-slate-500 mt-1">Daftar user/tamu lengkap beserta ringkasan booking.</p>
+                  </div>
+                  <div className="w-full sm:w-72">
+                    <Input
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="Cari nama / email / no HP"
+                      className="rounded-2xl"
+                    />
+                  </div>
+                </div>
+
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nama & Kontak</TableHead>
+                      <TableHead>Ringkasan</TableHead>
+                      <TableHead>Terakhir Booking</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredUsers.map((u) => (
+                      <TableRow key={u.id}>
+                        <TableCell>
+                          <div className="font-bold text-slate-900">{u.full_name || u.email.split("@")[0]}</div>
+                          <div className="text-xs text-slate-500">{u.email}</div>
+                          <div className="text-[11px] text-slate-600 mt-1">{u.phone || "-"}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm font-bold text-slate-900">{Number(u.total_bookings || 0)} booking</div>
+                          <div className="text-xs text-slate-500 mt-1">Total: {formatPrice(Number(u.total_spent || 0))}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm font-medium text-slate-900">
+                            {u.last_booking_at ? format(new Date(u.last_booking_at), "dd MMM yy", { locale: idLocale }) : "-"}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${
+                              u.role === "admin" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {u.role || "user"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-primary/20 text-primary hover:bg-primary/5 h-8 gap-1 rounded-xl"
+                            onClick={() => openUserDetail(u.id)}
+                          >
+                            <Info className="w-3 h-3" /> Detail
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {filteredUsers.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-10 text-slate-500">
+                          Tidak ada data tamu.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <Dialog open={userDialogOpen} onOpenChange={(o) => !o && closeUserDetail()}>
+                <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Detail Tamu</DialogTitle>
+                  </DialogHeader>
+
+                  {loadingUserDetail ? (
+                    <div className="py-10 text-center text-slate-500">
+                      <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                      Memuat detail tamu...
+                    </div>
+                  ) : !selectedUser ? (
+                    <div className="py-10 text-center text-slate-500">Data tidak tersedia.</div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                        <div>
+                          <div className="text-lg font-black text-slate-900">
+                            {selectedUser.user.full_name || selectedUser.user.email.split("@")[0]}
+                          </div>
+                          <div className="text-sm text-slate-600">{selectedUser.user.email}</div>
+                          <div className="text-sm text-slate-600 mt-1">{selectedUser.user.phone || "-"}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${
+                              selectedUser.user.role === "admin" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {selectedUser.user.role || "user"}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="rounded-xl"
+                            disabled={updatingUserRole || selectedUser.user.id === user?.id}
+                            onClick={() =>
+                              updateUserRole(
+                                selectedUser.user.id,
+                                selectedUser.user.role === "admin" ? "user" : "admin",
+                              )
+                            }
+                          >
+                            {selectedUser.user.role === "admin" ? "Jadikan User" : "Jadikan Admin"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                        <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">Total Booking</div>
+                          <div className="text-xl font-black text-slate-900 mt-1">{Number(selectedUser.stats.total_bookings || 0)}</div>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">Total Spend</div>
+                          <div className="text-xl font-black text-slate-900 mt-1">{formatPrice(Number(selectedUser.stats.total_spent || 0))}</div>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">Review</div>
+                          <div className="text-xl font-black text-slate-900 mt-1">{Number(selectedUser.stats.total_reviews || 0)}</div>
+                        </div>
+                        <div className="bg-slate-50 border border-slate-100 rounded-3xl p-4">
+                          <div className="text-[10px] font-bold uppercase text-slate-500">Last Booking</div>
+                          <div className="text-sm font-bold text-slate-900 mt-2">
+                            {selectedUser.stats.last_booking_at ? format(new Date(selectedUser.stats.last_booking_at), "dd MMM yy", { locale: idLocale }) : "-"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden">
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                          <div className="text-sm font-black text-slate-900">Riwayat Booking</div>
+                          <div className="text-xs font-bold text-slate-500">{selectedUser.bookings.length} data</div>
+                        </div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Villa</TableHead>
+                              <TableHead>Tanggal</TableHead>
+                              <TableHead>Total</TableHead>
+                              <TableHead>Status</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedUser.bookings.map((b) => (
+                              <TableRow key={b.id}>
+                                <TableCell>
+                                  <div className="font-bold text-slate-900">{b.villa_name || b.room_name || "-"}</div>
+                                  <div className="text-xs text-slate-500 mt-1">ID: #{b.id.slice(0, 8)}</div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm font-medium">
+                                    {format(new Date(b.check_in), "dd MMM yy", { locale: idLocale })} - {format(new Date(b.check_out), "dd MMM yy", { locale: idLocale })}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 font-bold uppercase mt-1">{b.payment_method}</div>
+                                </TableCell>
+                                <TableCell className="font-black text-slate-900">{formatPrice(Number(b.total_price || 0))}</TableCell>
+                                <TableCell>
+                                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase ${statusColors[b.status] || "bg-slate-100 text-slate-600"}`}>
+                                    {b.status}
+                                  </span>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {selectedUser.bookings.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={4} className="text-center py-10 text-slate-500">
+                                  Belum ada booking.
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+
+                  <DialogFooter>
+                    <Button type="button" variant="outline" className="w-full rounded-2xl" onClick={closeUserDetail}>
+                      Tutup
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </TabsContent>
+
             <TabsContent value="rooms" className="mt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -1045,6 +1456,112 @@ const AdminDashboard = () => {
                 formatPrice={formatPrice}
                 setViewDocsBooking={setViewDocsBooking}
               />
+            </TabsContent>
+
+            <TabsContent value="email" className="mt-6">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                <div className="flex items-start justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-900">Email & Notifikasi</h2>
+                    <p className="text-sm text-slate-500 mt-1">Atur SMTP, email notifikasi admin, reminder, dan follow-up.</p>
+                  </div>
+                  <Button type="button" variant="outline" className="rounded-2xl gap-2" onClick={handleSendTestEmail}>
+                    <Mail className="w-4 h-4" /> Test Email
+                  </Button>
+                </div>
+
+                <form onSubmit={handleUpdateEmailSettings} className="space-y-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Brand Name</Label>
+                      <Input name="brand_name" defaultValue={emailSettings?.brand_name || ""} placeholder="Nama aplikasi/villa" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">APP URL</Label>
+                      <Input name="app_url" defaultValue={emailSettings?.app_url || ""} placeholder="https://domain.com" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Email From</Label>
+                      <Input name="email_from" defaultValue={emailSettings?.email_from || ""} placeholder='Nama Villa <noreply@domain.com>' />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Admin Notify Email</Label>
+                      <Input name="admin_notify_email" defaultValue={emailSettings?.admin_notify_email || ""} placeholder="admin@domain.com" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border border-slate-100 bg-slate-50 p-5 space-y-4">
+                    <div className="text-sm font-black text-slate-900">SMTP</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">SMTP Host</Label>
+                        <Input name="smtp_host" defaultValue={emailSettings?.smtp_host || ""} placeholder="smtp.domain.com" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">SMTP Port</Label>
+                        <Input name="smtp_port" type="number" defaultValue={emailSettings?.smtp_port || 587} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">SMTP User</Label>
+                        <Input name="smtp_user" defaultValue={emailSettings?.smtp_user || ""} placeholder="user@domain.com" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">SMTP Password</Label>
+                        <Input
+                          name="smtp_pass"
+                          type="password"
+                          defaultValue=""
+                          placeholder={emailSettings?.smtp_pass_set ? "Sudah tersimpan (isi untuk ganti)" : "Isi password SMTP"}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Bank Name</Label>
+                      <Input name="bank_name" defaultValue={emailSettings?.bank_name || ""} placeholder="BCA" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Bank Account</Label>
+                      <Input name="bank_account" defaultValue={emailSettings?.bank_account || ""} placeholder="1234567890" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Bank Account Name</Label>
+                      <Input name="bank_account_name" defaultValue={emailSettings?.bank_account_name || ""} placeholder="Nama Pemilik" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Interval Job (menit)</Label>
+                      <Input name="email_job_interval_minutes" type="number" defaultValue={emailSettings?.email_job_interval_minutes || 30} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Reminder Check-in (hari)</Label>
+                      <Input name="checkin_reminder_days" type="number" defaultValue={emailSettings?.checkin_reminder_days || 1} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Follow-up After Stay (hari)</Label>
+                      <Input name="post_stay_followup_days" type="number" defaultValue={emailSettings?.post_stay_followup_days || 1} />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Email Test Tujuan</Label>
+                      <Input value={testEmailTo} onChange={(e) => setTestEmailTo(e.target.value)} placeholder="admin@domain.com" />
+                    </div>
+                  </div>
+
+                  <Button type="submit" className="w-full h-12 rounded-2xl gap-2 mt-2 shadow-lg shadow-primary/20" disabled={savingEmailSettings}>
+                    <Save className="w-5 h-5" /> {savingEmailSettings ? "Menyimpan..." : "Simpan"}
+                  </Button>
+                </form>
+              </div>
             </TabsContent>
           </div>
         </main>
