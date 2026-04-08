@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarDays, Users, Minus, Plus, Check, CreditCard, Wallet, FileUp, ShieldCheck } from "lucide-react";
-import { format, differenceInDays, isWithinInterval, parseISO } from "date-fns";
+import { format, differenceInDays, parseISO } from "date-fns";
 import { id } from "date-fns/locale";
 import type { Room } from "@/data/villas";
 import { toast } from "sonner";
@@ -23,6 +23,12 @@ interface BookingSheetProps {
 interface AvailabilityRow {
   check_in: string;
   check_out: string;
+  status?: string;
+}
+
+interface AvailabilityResponse {
+  total_units: number;
+  bookings: AvailabilityRow[];
 }
 
 const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
@@ -34,7 +40,8 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
   const [open, setOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [bookedDates, setBookedDates] = useState<{ start: Date; end: Date }[]>([]);
+  const [totalUnits, setTotalUnits] = useState(1);
+  const [bookings, setBookings] = useState<AvailabilityRow[]>([]);
   const [legalDocs, setLegalDocs] = useState<FileList | null>(null);
   const [syariahEnabled, setSyariahEnabled] = useState(true);
   const [syariahPolicy, setSyariahPolicy] = useState<string>("");
@@ -56,21 +63,40 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
 
       fetch(`${API_URL}/rooms/${room.id}/availability`)
         .then(res => res.json())
-        .then((data: AvailabilityRow[]) => {
-          const intervals = data.map((b) => ({
-            start: parseISO(b.check_in),
-            end: parseISO(b.check_out),
-          }));
-          setBookedDates(intervals);
+        .then((data: AvailabilityResponse) => {
+          setTotalUnits(Math.max(1, Number(data?.total_units || 0) || 1));
+          setBookings(Array.isArray(data?.bookings) ? data.bookings : []);
         })
         .catch(err => console.error("Gagal mengambil ketersediaan:", err));
     }
   }, [open, room.id, API_URL]);
 
-  const isDateBooked = (date: Date) => {
-    return bookedDates.some(interval => 
-      isWithinInterval(date, { start: interval.start, end: interval.end })
-    );
+  const countBookingsForDate = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return bookings.reduce((count, b) => {
+      const start = parseISO(b.check_in);
+      const end = parseISO(b.check_out);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
+      return d >= start && d < end ? count + 1 : count;
+    }, 0);
+  };
+
+  const isDateFullyBooked = (date: Date) => countBookingsForDate(date) >= totalUnits;
+
+  const getMaxOverlapForRange = (start: Date, end: Date) => {
+    const s = new Date(start);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(end);
+    e.setHours(0, 0, 0, 0);
+    let max = 0;
+    for (let d = new Date(s); d < e; d.setDate(d.getDate() + 1)) {
+      const c = countBookingsForDate(d);
+      if (c > max) max = c;
+      if (max >= totalUnits) return max;
+    }
+    return max;
   };
 
   const nights = checkIn && checkOut ? differenceInDays(checkOut, checkIn) : 0;
@@ -80,6 +106,8 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
   const finalTotalPrice = baseTotalPrice - totalChildDiscount;
   const serviceFee = finalTotalPrice * 0.05;
   const grandTotal = finalTotalPrice + serviceFee;
+  const selectedMaxOverlap = checkIn && checkOut && nights > 0 ? getMaxOverlapForRange(checkIn, checkOut) : 0;
+  const remainingUnits = Math.max(0, totalUnits - selectedMaxOverlap);
 
   const formatPrice = (price: number) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(price);
@@ -99,18 +127,9 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
       return;
     }
 
-    // Double check overlap on client side
-    const hasOverlap = bookedDates.some(interval => {
-      const checkInInterval = { start: checkIn, end: checkOut };
-      return (
-        isWithinInterval(checkIn, interval) ||
-        isWithinInterval(checkOut, interval) ||
-        isWithinInterval(interval.start, checkInInterval)
-      );
-    });
-
-    if (hasOverlap) {
-      toast.error("Maaf, tanggal yang Anda pilih sudah dipesan.");
+    const maxOverlap = getMaxOverlapForRange(checkIn, checkOut);
+    if (maxOverlap >= totalUnits) {
+      toast.error("Maaf, kamar sudah penuh untuk tanggal yang Anda pilih.");
       return;
     }
 
@@ -226,7 +245,7 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
                         mode="single" 
                         selected={checkIn} 
                         onSelect={setCheckIn} 
-                        disabled={(date) => date < new Date() || isDateBooked(date)} 
+                        disabled={(date) => date < new Date() || isDateFullyBooked(date)} 
                         initialFocus 
                         locale={id} 
                       />
@@ -247,7 +266,7 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
                         mode="single" 
                         selected={checkOut} 
                         onSelect={setCheckOut} 
-                        disabled={(date) => (checkIn ? date <= checkIn : date < new Date()) || isDateBooked(date)} 
+                        disabled={(date) => (checkIn ? date <= checkIn : date < new Date()) || isDateFullyBooked(date)} 
                         initialFocus 
                         locale={id} 
                       />
@@ -421,13 +440,19 @@ const BookingSheet = ({ room, children, onBook }: BookingSheetProps) => {
                     <span className="font-bold text-foreground">Total Pembayaran</span>
                     <span className="font-bold text-primary text-lg">{formatPrice(grandTotal)}</span>
                   </div>
+                  <div className="mt-2 flex items-center justify-between text-[11px] font-bold">
+                    <span className="text-muted-foreground">Ketersediaan</span>
+                    <span className={remainingUnits > 0 ? "text-green-600" : "text-red-600"}>
+                      Sisa {remainingUnits}/{totalUnits} unit
+                    </span>
+                  </div>
                 </div>
               )}
 
               <Button
                 onClick={handleBook}
                 className="w-full h-14 rounded-2xl text-lg font-bold mt-4"
-                disabled={loading || !checkIn || !checkOut || (syariahEnabled && !syariahAgreed)}
+                disabled={loading || !checkIn || !checkOut || remainingUnits < 1 || (syariahEnabled && !syariahAgreed)}
               >
                 {loading ? "Memproses..." : "Konfirmasi Booking"}
               </Button>

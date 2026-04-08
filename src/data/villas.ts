@@ -33,6 +33,7 @@ export interface Room {
   price: number;
   image: string;
   capacity: number;
+  total_units?: number;
   amenities: string[];
   description: string;
   images: string[];

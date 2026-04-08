@@ -246,6 +246,18 @@ const ensureSchema = async () => {
   }
 
   try {
+    const [columns] = await pool.query('SHOW COLUMNS FROM rooms');
+    const columnNames = columns.map(c => c.Field);
+
+    if (!columnNames.includes('total_units')) {
+      await pool.query('ALTER TABLE rooms ADD COLUMN total_units INT NOT NULL DEFAULT 1 AFTER capacity');
+      await pool.query('UPDATE rooms SET total_units = 1 WHERE total_units IS NULL');
+    }
+  } catch (err) {
+    console.error("Error updating rooms schema:", err);
+  }
+
+  try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS email_settings (
         id TINYINT NOT NULL PRIMARY KEY,
@@ -570,7 +582,7 @@ app.get('/api/rooms/:id', async (req, res) => {
 
 // Create Room (Admin Only)
 app.post('/api/admin/rooms', isAdmin, upload.array('images', 5), async (req, res) => {
-  const { name, type, price, capacity, amenities, description } = req.body;
+  const { name, type, price, capacity, total_units, amenities, description } = req.body;
   const id = uuidv4();
   
   try {
@@ -594,10 +606,11 @@ app.post('/api/admin/rooms', isAdmin, upload.array('images', 5), async (req, res
     }
     
     const mainImage = imagePaths.length > 0 ? imagePaths[0] : '';
+    const totalUnitsNum = Math.max(1, Number(total_units || 0) || 1);
     
     await pool.query(
-      'INSERT INTO rooms (id, name, type, price, image, capacity, amenities, description, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, name, type, price, mainImage, capacity, JSON.stringify(parsedAmenities), description, JSON.stringify(imagePaths)]
+      'INSERT INTO rooms (id, name, type, price, image, capacity, total_units, amenities, description, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, name, type, price, mainImage, capacity, totalUnitsNum, JSON.stringify(parsedAmenities), description, JSON.stringify(imagePaths)]
     );
     res.status(201).json({ id, message: 'Room created' });
   } catch (error) {
@@ -608,7 +621,7 @@ app.post('/api/admin/rooms', isAdmin, upload.array('images', 5), async (req, res
 
 // Update Room (Admin Only)
 app.put('/api/admin/rooms/:id', isAdmin, upload.array('images', 5), async (req, res) => {
-  const { name, type, price, capacity, amenities, description } = req.body;
+  const { name, type, price, capacity, total_units, amenities, description } = req.body;
   try {
     let parsedAmenities = amenities;
     if (typeof amenities === 'string') {
@@ -629,10 +642,11 @@ app.put('/api/admin/rooms/:id', isAdmin, upload.array('images', 5), async (req, 
 
     const finalImages = [...existingPaths, ...uploadedPaths].filter(Boolean);
     const mainImage = finalImages.length > 0 ? finalImages[0] : '';
+    const totalUnitsNum = Math.max(1, Number(total_units || 0) || 1);
 
     await pool.query(
-      'UPDATE rooms SET name = ?, type = ?, price = ?, image = ?, capacity = ?, amenities = ?, description = ?, images = ? WHERE id = ?',
-      [name, type, price, mainImage, capacity, JSON.stringify(parsedAmenities), description, JSON.stringify(finalImages), req.params.id]
+      'UPDATE rooms SET name = ?, type = ?, price = ?, image = ?, capacity = ?, total_units = ?, amenities = ?, description = ?, images = ? WHERE id = ?',
+      [name, type, price, mainImage, capacity, totalUnitsNum, JSON.stringify(parsedAmenities), description, JSON.stringify(finalImages), req.params.id]
     );
     res.json({ message: 'Room updated' });
   } catch (error) {
@@ -815,11 +829,19 @@ app.post('/api/admin/bookings/:id/verify-syariah', isAdmin, async (req, res) => 
 // Get Booked Dates for a Room
 app.get('/api/rooms/:id/availability', async (req, res) => {
   try {
+    const roomId = req.params.id;
+    const [rooms] = await pool.query('SELECT total_units FROM rooms WHERE id = ? LIMIT 1', [roomId]);
+    if (!rooms?.[0]) return res.status(404).json({ message: 'Room not found' });
+    const totalUnits = Math.max(1, Number(rooms[0].total_units || 0) || 1);
     const [bookings] = await pool.query(
-      'SELECT check_in, check_out FROM bookings WHERE room_id = ? AND status NOT IN ("cancelled")',
-      [req.params.id]
+      `SELECT check_in, check_out, status
+       FROM bookings
+       WHERE room_id = ?
+         AND status NOT IN ('cancelled')
+       ORDER BY check_in ASC`,
+      [roomId]
     );
-    res.json(bookings);
+    res.json({ total_units: totalUnits, bookings });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
@@ -971,6 +993,7 @@ app.get('/api/bookings', async (req, res) => {
 
 // Create Booking with Document Upload
 app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req, res) => {
+  const connection = await pool.getConnection();
   try {
     const { room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, syariah_agreed } = req.body;
     
@@ -1002,12 +1025,37 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
       return res.status(400).json({ message: 'Wajib mengunggah dokumen identitas untuk verifikasi syariah' });
     }
 
+    await connection.beginTransaction();
+    const [roomRows] = await connection.query('SELECT total_units FROM rooms WHERE id = ? FOR UPDATE', [room_id]);
+    const roomRow = roomRows?.[0];
+    if (!roomRow) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Room not found' });
+    }
+    const totalUnits = Math.max(1, Number(roomRow.total_units || 0) || 1);
+
+    const [overlapRows] = await connection.query(
+      `SELECT COUNT(*) as count
+       FROM bookings
+       WHERE room_id = ?
+         AND status NOT IN ('cancelled')
+         AND check_in < ?
+         AND check_out > ?`,
+      [room_id, check_out, check_in],
+    );
+    const overlapCount = Number(overlapRows?.[0]?.count || 0);
+    if (overlapCount >= totalUnits) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Maaf, kamar sudah penuh untuk tanggal yang dipilih.' });
+    }
+
     const id = uuidv4();
     const initialStatus = syariahEnabled && guestCountNum >= 2 ? 'pending_verification' : 'pending';
-    await pool.query(
+    await connection.query(
       'INSERT INTO bookings (id, user_id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, legal_docs, status, syariah_agreed, syariah_agreed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
       [id, req.user.id, room_id, room_name, room_image, check_in, check_out, guests, children, total_price, child_discount, payment_method, JSON.stringify(legalDocs), initialStatus, syariahEnabled ? (agreed ? 1 : 0) : 0]
     );
+    await connection.commit();
 
     getEmailSettings()
       .then((settings) => {
@@ -1037,8 +1085,13 @@ app.post('/api/bookings', requireAuth, upload.array('legal_docs', 5), async (req
 
     res.status(201).json({ id, status: initialStatus, message: 'Booking created successfully' });
   } catch (error) {
+    try {
+      await connection.rollback();
+    } catch {}
     console.error(error);
     res.status(500).json({ message: 'Server error' });
+  } finally {
+    connection.release();
   }
 });
 

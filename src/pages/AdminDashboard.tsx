@@ -237,11 +237,13 @@ const AdminDashboard = () => {
           const r = raw as Record<string, unknown>;
           const amenitiesRaw = r.amenities;
           const imagesRaw = r.images;
+          const totalUnitsRaw = r.total_units;
 
           return {
             ...(r as unknown as Room),
             amenities: (typeof amenitiesRaw === "string" ? JSON.parse(amenitiesRaw) : amenitiesRaw) as string[],
             images: (typeof imagesRaw === "string" ? JSON.parse(imagesRaw) : imagesRaw) as string[],
+            total_units: Math.max(1, Number(totalUnitsRaw || 0) || 1),
           };
         }),
       );
@@ -516,6 +518,7 @@ const AdminDashboard = () => {
     formParams.append("type", formData.get("type") as string);
     formParams.append("price", formData.get("price") as string);
     formParams.append("capacity", formData.get("capacity") as string);
+    formParams.append("total_units", (formData.get("total_units") as string) || "1");
 
     // Filter file uploads
     const fileInputs = formData.getAll("images") as File[];
@@ -1375,6 +1378,13 @@ const AdminDashboard = () => {
                         </div>
                       </div>
                       <div className="space-y-2">
+                        <Label className="text-sm font-medium">Jumlah Unit (Stock)</Label>
+                        <Input name="total_units" type="number" defaultValue={editingRoom?.total_units ?? 1} required />
+                        <div className="text-xs text-muted-foreground">
+                          Contoh: jika tipe kamar ini punya 4 kamar fisik, isi 4.
+                        </div>
+                      </div>
+                      <div className="space-y-2">
                         <Label className="text-sm font-medium">Gambar Kamar (Upload Banyak File)</Label>
                         <Input name="images" type="file" multiple accept="image/*" />
                         {editingRoom && <div className="text-xs text-muted-foreground mt-1">Biarkan kosong jika tidak ingin menambah gambar baru.</div>}
@@ -1405,6 +1415,7 @@ const AdminDashboard = () => {
                       <div className="flex-1 min-w-0">
                         <h3 className="font-black text-slate-900 truncate">{room.name}</h3>
                         <p className="text-xs text-slate-500 mt-1">{room.type}</p>
+                        <p className="text-[11px] text-slate-500 mt-1 font-bold">Stock: {room.total_units ?? 1} unit</p>
                         <p className="text-sm font-black text-primary mt-2">{formatPrice(room.price)}</p>
                       </div>
                       <div className="flex flex-col gap-2">
